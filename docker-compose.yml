@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:latest
+    command: ["--config", "/app/litellm-config.yaml"]
+    volumes:
+      - ./litellm-config.yaml:/app/litellm-config.yaml:ro
+    env_file:
+      - .env
+    networks:
+      - llm_network
+    ports:
+      - "8000:8000"
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      OPENAI_API_BASE_URL: "http://litellm:8000"
+      OPENAI_API_KEY: "dummy-key"
+    networks:
+      - llm_network
+    depends_on:
+      - litellm
+    ports:
+      - "3000:8080"
+
+networks:
+  llm_network:
+    driver: bridge
+
+volumes:
+  open-webui-data:
+    driver: local
