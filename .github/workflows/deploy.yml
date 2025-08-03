@@ -24,6 +24,11 @@ jobs:
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
       - name: Validate required secrets
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          WEBUI_SECRET_KEY: ${{ secrets.WEBUI_SECRET_KEY }}
         run: |
           required_secrets=(
             "OPENROUTER_API_KEY"
