@@ -1,31 +1,66 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-litellm}
+      POSTGRES_USER: ${POSTGRES_USER:-llmproxy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - llm_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmproxy}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   litellm:
-    image: ghcr.io/berriai/litellm:latest
-    command: ["--config", "/app/litellm-config.yaml"]
+    image: ghcr.io/berriai/litellm:v1.73.0-stable
+    command: ["--config", "/app/litellm-config.yaml", "--port", "8000", "--host", "0.0.0.0"]
     volumes:
       - ./litellm-config.yaml:/app/litellm-config.yaml:ro
-    env_file:
-      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-llmproxy}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-litellm}
+      STORE_MODEL_IN_DB: "True"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?Required}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     networks:
       - llm_network
     ports:
-      - "8000:8000"
+      - "${LITELLM_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     volumes:
       - open-webui-data:/app/backend/data
     environment:
-      OPENAI_API_BASE_URL: "http://litellm:8000"
-      OPENAI_API_KEY: "dummy-key"
+      OPENAI_API_BASE_URL: http://litellm:8000
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      WEBUI_NAME: ${WEBUI_NAME:-LLM Stack}
+      WEBUI_AUTH: "True"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Required}
+      DEFAULT_USER_ROLE: ${DEFAULT_USER_ROLE:-pending}
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-True}
+      WEBUI_ADMIN_EMAIL: ${WEBUI_ADMIN_EMAIL:?Required}
+      # Web Search - всё с дефолтами
+      ENABLE_WEB_SEARCH: ${ENABLE_WEB_SEARCH:-True}
+      WEB_SEARCH_ENGINE: ${WEB_SEARCH_ENGINE:-duckduckgo}
+      WEB_SEARCH_RESULT_COUNT: ${WEB_SEARCH_RESULT_COUNT:-3}
     networks:
       - llm_network
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
     depends_on:
       - litellm
-    ports:
-      - "3000:8080"
+    restart: unless-stopped
 
 networks:
   llm_network:
@@ -33,4 +68,4 @@ networks:
 
 volumes:
   open-webui-data:
-    driver: local
+  postgres_data:

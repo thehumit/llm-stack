@@ -1,40 +1,89 @@
-name: Deploy
+name: Deploy LLM Stack
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: |
-            ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Add server to known_hosts
         run: |
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
+      - name: Validate required secrets
+        run: |
+          required_secrets=(
+            "OPENROUTER_API_KEY"
+            "LITELLM_MASTER_KEY"
+            "POSTGRES_PASSWORD"
+            "WEBUI_SECRET_KEY"
+          )
+          
+          for secret in "${required_secrets[@]}"; do
+            if [ -z "${!secret}" ]; then
+              echo "Error: $secret is not set"
+              exit 1
+            fi
+          done
+
       - name: Create .env file
-        run: echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" > .env
+        run: |
+          cat > .env <<EOF
+          # Required
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          LITELLM_MASTER_KEY=${{ secrets.LITELLM_MASTER_KEY }}
+          OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+          WEBUI_SECRET_KEY=${{ secrets.WEBUI_SECRET_KEY }}
+          WEBUI_ADMIN_EMAIL=${{ secrets.WEBUI_ADMIN_EMAIL }}
+          
+          # Optional
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          WEBUI_ADMIN_EMAIL=${{ secrets.WEBUI_ADMIN_EMAIL }}
+          WEBUI_NAME=${{ vars.WEBUI_NAME }}
+          EOF
 
       - name: Copy project to server
         run: |
-          rsync -az --delete -e "ssh" ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SERVER_PROJECT_PATH }}
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'README.md' \
+            --exclude '.env.example' \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SERVER_PROJECT_PATH }}
 
       - name: Deploy on server
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} <<'CMD'
             set -e
             cd ${{ secrets.SERVER_PROJECT_PATH }}
-            docker compose down
+            
+            echo "Stopping existing services..."
+            docker compose down --remove-orphans || true
+            
+            echo "Pulling latest images..."
             docker compose pull
+            
+            echo "Starting services..."
             docker compose up -d
-            docker image prune -af
+            
+            echo "Waiting for services to be ready..."
+            sleep 10
+            
+            echo "Deployment completed!"
+            docker compose ps
           CMD
-
